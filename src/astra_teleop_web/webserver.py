@@ -99,7 +99,13 @@ class WebServer:
         self.app.router.add_post("/offer", self.offer)
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        self.app.router.add_static('/', os.path.join(script_dir, 'static'), show_index=True, )
+        # serve index.html for root path
+        async def index_handler(request):
+            index_path = os.path.join(script_dir, 'static', 'index.html')
+            return aiohttp.web.FileResponse(index_path)
+
+        self.app.router.add_get('/', index_handler)
+        self.app.router.add_static('/', os.path.join(script_dir, 'static'), show_index=False)
         
         async def on_prepare(request, response):
             response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
@@ -124,7 +130,7 @@ class WebServer:
         site = aiohttp.web.TCPSite(runner, '0.0.0.0', 9443, ssl_context=ssl_context)
         await site.start()
         
-        logger.info("start teleop at https://localhost:9443/index.html")
+        logger.info("start teleop at https://localhost:9443/")
 
     async def offer(self, request):
         params = await request.json()

@@ -200,6 +200,11 @@ class Teleopoperator:
         pedal_names_arm_mode = ["left-gripper", "lift-neg", "lift-pos", "right-gripper"]
         non_sensetive_area = 0.1
         cliped_pedal_real_values = np.clip((np.array(pedal_real_values) - 0.5) / (0.5 - non_sensetive_area) * 0.5 + 0.5, 0, 1)
+        
+        # Debug Log: Print values periodically to check input range
+        # if np.random.rand() < 0.05: # approx every 20 calls
+            # logger.info(f"Pedal Raw: {np.round(pedal_real_values, 2)} -> Clipped: {np.round(cliped_pedal_real_values, 2)}")
+            
         if self.teleop_mode == "arm":
             values = dict(zip(pedal_names_arm_mode, cliped_pedal_real_values))
 
@@ -208,15 +213,18 @@ class Teleopoperator:
 
             TIME_DELTA = 0.1 # TODO Better solution
             change = lift_vel * TIME_DELTA
-
+            change_left = 1
+            change_right = 1
             LIFT_DISTANCE_MIN = 0
             LIFT_DISTANCE_MAX = 1.2
             if self.lift_distance + change < LIFT_DISTANCE_MIN or self.lift_distance + change > LIFT_DISTANCE_MAX:
+                change_left = 0 if self.lift_distance + change < LIFT_DISTANCE_MIN else 1
+                change_right = 0 if self.lift_distance + change > LIFT_DISTANCE_MAX else 1
                 logger.warn("Lift Over Limit")
                 self.webserver.control_datachannel_log("Lift Over Limit")
             elif change:
-                self.Tscam["left"][2,3] += change
-                self.Tscam["right"][2,3] += change
+                self.Tscam["left"][2,3] += change*change_left
+                self.Tscam["right"][2,3] += change*change_right
                 self.lift_distance += change
                 logger.info(f"Lift Distance: {self.lift_distance:.3f}")
                 self.webserver.control_datachannel_log(f"Lift Distance: {self.lift_distance:.3f}")

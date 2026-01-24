@@ -552,7 +552,7 @@ async function calibrate() {
 async function getSerial() {
   let port;
   try {
-    const usbVendorId = 0x10c4; // Silicon Labs
+    const usbVendorId = 0x1a86; // New Vendor
     port = await navigator.serial.requestPort({ filters: [{ usbVendorId }] })
 
     await port.open({ baudRate: 921600 });
@@ -628,7 +628,7 @@ async function getSerial() {
 const PEDAL_MAX = 4096;
 
 const pedalNames = ["angular-pos", "angular-neg", "linear-neg", "linear-pos"];
-const pedalIds = [0, 1, 2, 3];
+const pedalIds = [3, 4, 5, 6];
 
 function getPedalValues(buffer) {
   let pedalValues = [];
@@ -636,7 +636,7 @@ function getPedalValues(buffer) {
   for (const i in pedalNames) {
     pedalValues.push(data.getUint16(2 * pedalIds[i], false) / PEDAL_MAX);
   }
-  return pedalValues;
+  return pedalValues; 
 }
 
 async function connectPedal() {
