@@ -12,7 +12,7 @@ from astra_teleop_web.webserver import WebServer
 logger = logging.getLogger(__name__)
 
 GRIPPER_MAX = 0.055
-INITIAL_LIFT_DISTANCE = 0.8
+INITIAL_LIFT_DISTANCE = 0.916
 
 FAR_SEEING_HEAD_TILT = 0.26
 
@@ -55,7 +55,7 @@ class Teleopoperator:
             ok = True
             for side in ["left", "right"]:
                 if self.Tcamgoal_last[side] is None:
-                    logger.info(f"Waiting for new Tcamgoal_last {side}")
+                    # logger.info(f"Waiting for new Tcamgoal_last {side}")
                     ok = False
             if ok:
                 break
@@ -69,6 +69,9 @@ class Teleopoperator:
             logger.info(f"Tscam ({side}): \n{str(self.Tscam[side])}")
                 
     async def update_percise_mode(self, percise_mode):
+        last_percise_mode = self.percise_mode
+        # if last_percise_mode == percise_mode:
+        #     return
         self.percise_mode = percise_mode
         self.solve = get_solve(scale=0.5 if self.percise_mode == "more_percise" else 1.0) # scale means to amplify motion
         await self.reset_Tscam()
@@ -116,7 +119,7 @@ class Teleopoperator:
                 )
             
                 if not (pos_dist < 0.02 and rot_dist < 0.03):
-                    logger.info(f"Resetting {side}: pos_dist {pos_dist}m, rot_dist {rot_dist}rad, curr_pose: \n{curr_pose}")
+                    # logger.info(f"Resetting {side}: pos_dist {pos_dist}m, rot_dist {rot_dist}rad, curr_pose: \n{curr_pose}")
                     ok = False            
             if ok:
                 break
@@ -307,12 +310,15 @@ class Teleopoperator:
             await self.update_percise_mode(percise_mode=True)
             self.update_teleop_mode("arm")
         elif control_type == "percise_mode_false":
+            self.update_teleop_mode(None)
             await self.update_percise_mode(percise_mode=False)
             self.update_teleop_mode("arm")
         elif control_type == "percise_mode_true":
+            self.update_teleop_mode(None)
             await self.update_percise_mode(percise_mode=True)
             self.update_teleop_mode("arm")
         elif control_type == "percise_mode_more_percise":
+            self.update_teleop_mode(None)
             await self.update_percise_mode(percise_mode="more_percise")
             self.update_teleop_mode("arm")
         elif control_type == "gripper_lock_left":

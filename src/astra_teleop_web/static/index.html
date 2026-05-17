@@ -16,9 +16,9 @@
 <body>
 
 <div class="container mx-auto py-4 sm:px-4 grid grid-cols-3 gap-4">
-    <div class="mx-auto p-6 bg-white border-y sm:border-x border-gray-200 sm:rounded-lg shadow col-span-3 w-full">
+    <!-- <div class="mx-auto p-6 bg-white border-y sm:border-x border-gray-200 sm:rounded-lg shadow col-span-3 w-full">
         <h5 class="text-2xl font-bold tracking-tight text-gray-900">Astra Teleop</h5>
-    </div>
+    </div> -->
     <div class="mx-auto p-6 bg-white border-y sm:border-x border-gray-200 sm:rounded-lg shadow col-span-2 w-full">
         <div>
             <button id="capture" onclick="capture()" class="bg-white hover:bg-gray-100 text-gray-800 font-semibold py-2 px-4 border border-gray-400 rounded disabled:opacity-50 disabled:cursor-not-allowed mb-3">
@@ -54,20 +54,44 @@
                 <div class="w-full text-right">Right Gripper: <span id="gripper-lock-right">Unknown</span></div>
             </div>
         </p>
-        <p class="mt-3 font-normal text-gray-700">
-            Shortcuts: [0] for disable teleop, [`] for base mode, [1] for arm mode, [Shift+`] for base mode with reset, [Shift+1] for arm mode with reset, [r] for reset robot, [f] for send done signal, [t] for start stream
-        </p>
     </div>
     <div class="mx-auto p-6 bg-white border-y sm:border-x border-gray-200 sm:rounded-lg shadow w-full">
+        <p class="mt-3 font-normal text-gray-700">
+            Shortcuts: [0] for disable teleop, [`] for base mode, [1] for arm mode, [Shift+`] for base mode with reset, [Shift+1] for arm mode with reset, [r] for reset robot, [f] for send done signal, [t] for start stream, [2] to disable precise mode, [3] precise, [4] more preciese, [z] LGrip Lock, [x] RGrip Lock
+        </p>
+         <!-- if (keyName.toLowerCase() == '0') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_none") }));
+        } else if (keyName.toLowerCase() == '`') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_base") }));
+        } else if (keyName.toLowerCase() == '1') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_arm") }));
+        }else if (keyName.toLowerCase() == '~') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_base_with_reset") }));
+        } else if (keyName.toLowerCase() == '!') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_arm_with_reset") }));
+        } else if (keyName.toLowerCase() == '2') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("percise_mode_false") }));
+        } else if (keyName.toLowerCase() == '3') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("percise_mode_true") }));
+        } else if (keyName.toLowerCase() == '4') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("percise_mode_more_percise") }));
+        } else if (keyName.toLowerCase() == 'r') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("reset") }));
+        } else if (keyName.toLowerCase() == 'f') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("done") }));
+        } else if (keyName.toLowerCase() == 't') {
+          start();
+        } else if (keyName.toLowerCase() == 'z') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_left") }));
+        } else if (keyName.toLowerCase() == 'x') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_right") }));
+        } -->
         <div>
             <h6 class="mb-2 text-2xl font-bold tracking-tight text-gray-900">Capture Playback</h6>
             <p class="mt-3 font-normal text-gray-700">
                 ArUco Timing: <span id="aruco-timing">INF</span>ms | Network: <span id="pc-status">idle</span> <span id="pc-ping">INF</span>ms
             </p>
             <canvas id="canvas-imshow" class="mt-3 w-full"></canvas>
-            <p class="mt-3 font-normal text-gray-700">
-                Video from your device will be processed locally by OpenCV.js, and will NOT be uploaded to the server.
-            </p>
         </div>
         <div class="mt-6">
             <h6 class="mb-2 text-2xl font-bold tracking-tight text-gray-900">Pedal Status</h6>
@@ -77,13 +101,13 @@
             <!-- Ref: https://stackoverflow.com/questions/39809103/vertical-slider-for-chrome-and-moz -->
             <div class="[writing-mode:vertical-lr] [direction:ltr] mt-3">
                 <!-- Ref: https://flowbite.com/docs/forms/range/ -->
-                <label for="pedal-angular-pos" class="block text-sm font-medium text-gray-900 dark:text-white">Angular +</label>
+                <label for="pedal-angular-pos" class="block text-sm font-medium text-gray-900 dark:text-white">Left (A+) / LGrip</label>
                 <input id="pedal-angular-pos" type="range" orient="vertical" value="50" class="mr-6 w-2 h-full bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" disabled>
-                <label for="pedal-angular-neg" class="block text-sm font-medium text-gray-900 dark:text-white">Angular -</label>
+                <label for="pedal-angular-neg" class="block text-sm font-medium text-gray-900 dark:text-white">Right (A-) / Lower</label>
                 <input id="pedal-angular-neg" type="range" orient="vertical" value="50" class="mr-6 w-2 h-full bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" disabled>
-                <label for="pedal-linear-neg" class="block text-sm font-medium text-gray-900 dark:text-white">Linear -</label>
+                <label for="pedal-linear-neg" class="block text-sm font-medium text-gray-900 dark:text-white">Backward (L-) / Raise</label>
                 <input id="pedal-linear-neg" type="range" orient="vertical" value="50" class="mr-6 w-2 h-full bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" disabled>
-                <label for="pedal-linear-pos" class="block text-sm font-medium text-gray-900 dark:text-white">Linear +</label>
+                <label for="pedal-linear-pos" class="block text-sm font-medium text-gray-900 dark:text-white">Forward (L+) / RGrip</label>
                 <input id="pedal-linear-pos" type="range" orient="vertical" value="50" class="mr-6 w-2 h-full bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" disabled>
             </div>
         </div>
