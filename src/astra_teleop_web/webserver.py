@@ -84,6 +84,14 @@ class WebServer:
         self.t = threading.Thread(target=asyncio_run_thread_in_new_loop, args=(self.run_server(), ), daemon=True)
         self.t.start()
 
+    def _log_task_exception(self, task):
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("web control task failed")
+
     async def run_server(self):
         self.loop = asyncio.get_running_loop()
         self.app = aiohttp.web.Application()
@@ -182,7 +190,8 @@ class WebServer:
                 async def on_message(msg):
                     control_type = json.loads(msg)
                     if self.on_control:
-                        asyncio.create_task(self.on_control(control_type))
+                        task = asyncio.create_task(self.on_control(control_type))
+                        task.add_done_callback(self._log_task_exception)
             else:
                 raise Exception("Unknown label")
 

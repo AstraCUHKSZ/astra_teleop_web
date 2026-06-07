@@ -764,7 +764,9 @@ window.addEventListener('load', function () {
         // alert(`Combination of ctrlKey + ${keyName}`);
         return;
       } else {
-        if (keyName.toLowerCase() == '0') {
+        if (keyName == 'ArrowLeft') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("rerecord") }));
+        } else if (keyName.toLowerCase() == '0') {
           controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_none") }));
         } else if (keyName.toLowerCase() == '`') {
           controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_base") }));

@@ -32,6 +32,7 @@ class Teleopoperator:
         self.on_get_initial_eef_pose = None
         self.on_reset = None
         self.on_done = None
+        self.on_rerecord = None
         
         self.teleop_mode = None
         
@@ -289,6 +290,10 @@ class Teleopoperator:
             self.on_done()
             self.webserver.control_datachannel_log("Done event")
             logger.info("Done event")
+        elif control_type == "rerecord":
+            self.on_rerecord()
+            self.webserver.control_datachannel_log("Rerecord event")
+            logger.info("Rerecord event")
         elif control_type == "teleop_mode_none":
             self.update_teleop_mode(None)
         elif control_type == "teleop_mode_base":
