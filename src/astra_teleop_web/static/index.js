@@ -639,6 +639,27 @@ function getPedalValues(buffer) {
   return pedalValues; 
 }
 
+let lastLeftSwitch = false;
+let lastRightSwitch = false;
+function detectSwitchChange(buffer) {
+  const data = new DataView(buffer, 2);
+  const leftSwitch = !Boolean(data.getUint16(0, false));
+  const rightSwitch = !Boolean(data.getUint16(2, false));
+  let leftSwitchChanged = false;
+  let rightSwitchChanged = false;
+  if (leftSwitch !== lastLeftSwitch) {
+    leftSwitchChanged = true;
+  }
+  if (rightSwitch !== lastRightSwitch) {
+    rightSwitchChanged = true;
+  }
+
+  lastLeftSwitch = leftSwitch;
+  lastRightSwitch = rightSwitch;
+
+  return { leftSwitch, rightSwitch, leftSwitchChanged, rightSwitchChanged };
+}
+
 async function connectPedal() {
   if (localStorage.getItem("pedalMin") === null) {
     toastr.error("You need calibrate pedal first");
@@ -678,6 +699,14 @@ async function connectPedal() {
     }
     
     pedalCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify(pedalRealValues) }))
+
+    const { leftSwitchChanged, rightSwitc hChanged } = detectSwitchChange(buffer);
+    if (leftSwitchChanged) {
+      controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_right") }));
+    }
+    if (rightSwitchChanged) {
+      controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_left") }));
+    }
   }
 
   pedalCommTarget.removeEventListener('fromServer', fromServerCb);

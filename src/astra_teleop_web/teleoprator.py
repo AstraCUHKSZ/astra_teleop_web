@@ -74,7 +74,7 @@ class Teleopoperator:
         # if last_percise_mode == percise_mode:
         #     return
         self.percise_mode = percise_mode
-        self.solve = get_solve(scale=0.5 if self.percise_mode == "more_percise" else 1.0) # scale means to amplify motion
+        self.solve = get_solve(scale=0.6 if self.percise_mode == "more_percise" else 1.3) # scale means to amplify motion
         await self.reset_Tscam()
         
     def update_teleop_mode(self, teleop_mode):
