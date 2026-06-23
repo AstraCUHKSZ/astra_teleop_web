@@ -232,7 +232,7 @@ class Teleopoperator:
         
         if self.remote_mode == "lift":
             # 右升左降
-            LIFT_VEL_MAX = 0.5
+            LIFT_VEL_MAX = 0.1
             lift_vel = force * LIFT_VEL_MAX * (1 if side == "right" else -1)
 
             TIME_DELTA = 0.1 # TODO Better solution

@@ -720,12 +720,12 @@ async function connectPedal() {
     
     pedalCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify(pedalRealValues) }))
 
-    const { leftSwitchChanged, rightSwitc hChanged } = detectSwitchChange(buffer);
+    const { leftSwitchChanged, rightSwitchChanged } = detectSwitchChange(buffer);
     if (leftSwitchChanged) {
-      controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_right") }));
+      controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_left") }));
     }
     if (rightSwitchChanged) {
-      controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_left") }));
+      controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_right") }));
     }
   }
 
@@ -1170,20 +1170,17 @@ window.addEventListener('load', function () {
     message = JSON.parse(evt.detail);
     toastr.info("Server Message: " + message);
 
-    if (message === "Teleop Mode: None") {
-      document.getElementById('teleop-mode').innerHTML = 'None';
+    if (message === "Teleop Mode: Off") {
+      document.getElementById('teleop-mode').innerHTML = 'Off';
       document.getElementById('teleop-mode').style.color = 'black';
-    } else if (message === "Teleop Mode: Base") {
-      document.getElementById('teleop-mode').innerHTML = 'Base';
-      document.getElementById('teleop-mode').style.color = 'red';
-    } else if (message === "Teleop Mode: Arm") {
-      document.getElementById('teleop-mode').innerHTML = 'Arm';
+    } else if (message === "Teleop Mode: On") {
+      document.getElementById('teleop-mode').innerHTML = 'On';
       document.getElementById('teleop-mode').style.color = 'blue';
-    } else if (message === "Teleop Mode: Arm (Percise)") {
-      document.getElementById('teleop-mode').innerHTML = 'Arm (Percise)';
+    } else if (message === "Teleop Mode: On (Percise)") {
+      document.getElementById('teleop-mode').innerHTML = 'On (Percise)';
       document.getElementById('teleop-mode').style.color = 'blue';
-    } else if (message === "Teleop Mode: Arm (More Percise)") {
-      document.getElementById('teleop-mode').innerHTML = 'Arm (More Percise)';
+    } else if (message === "Teleop Mode: On (More Percise)") {
+      document.getElementById('teleop-mode').innerHTML = 'On (More Percise)';
       document.getElementById('teleop-mode').style.color = 'blue';
     } else if (message === "Left Gripper Lock: Locked (Ready to Unlock)") {
       document.getElementById('gripper-lock-left').innerHTML = 'Locked (Ready to Unlock)';
@@ -1197,16 +1194,10 @@ window.addEventListener('load', function () {
       document.getElementById('gripper-lock-left').innerHTML = 'Locked';
     } else if (message.startsWith("Right Gripper Lock: Locked")) {
       document.getElementById('gripper-lock-right').innerHTML = 'Locked';
-    } else if (message === "Left Gripper Lock: Locked (Ready to Unlock)") {
-      document.getElementById('gripper-lock-left').innerHTML = 'Locked (Ready to Unlock)';
-    } else if (message === "Right Gripper Lock: Locked (Ready to Unlock)") {
-      document.getElementById('gripper-lock-right').innerHTML = 'Locked (Ready to Unlock)';
-    } else if (message === "Change to Gripper Mode") {
-      const orig = document.getElementById('teleop-mode').innerHTML;
-      document.getElementById('remote-mode').innerHTML = orig.replace(/Remote Mode: \S+/, "Remote Mode: Gripper");
+    }  else if (message === "Change to Gripper Mode") {
+      document.getElementById('remote-mode').innerHTML = "Gripper";
     } else if (message === "Change to Lift Mode") {
-      const orig = document.getElementById('teleop-mode').innerHTML;
-      document.getElementById('remote-mode').innerHTML = orig.replace(/Remote Mode: \S+/, "Remote Mode: Lift");
+      document.getElementById('remote-mode').innerHTML = "Lift";
     }
   });
 
