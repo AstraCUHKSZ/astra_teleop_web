@@ -80,6 +80,7 @@ class WebServer:
         self.on_hand = None
         self.on_pedal = None
         self.on_control = None
+        self.on_remote = None
 
         self.t = threading.Thread(target=asyncio_run_thread_in_new_loop, args=(self.run_server(), ), daemon=True)
         self.t.start()
@@ -192,6 +193,12 @@ class WebServer:
                     if self.on_control:
                         task = asyncio.create_task(self.on_control(control_type))
                         task.add_done_callback(self._log_task_exception)
+            elif channel.label == "remote":
+                @channel.on("message")
+                async def on_message(msg):
+                    remote_values = json.loads(msg)
+                    if self.on_remote:
+                        self.on_remote(remote_values)
             else:
                 raise Exception("Unknown label")
 
@@ -285,6 +292,7 @@ if __name__ == '__main__':
     webserver.on_hand = print
     webserver.on_pedal = print
     webserver.on_control = print
+    webserver.on_remote = print
     
     while True:
         time.sleep(0.1)

@@ -22,6 +22,7 @@ class Teleopoperator:
         self.webserver.on_hand = self.hand_cb
         self.webserver.on_pedal = self.pedal_cb
         self.webserver.on_control = self.control_cb
+        self.webserver.on_remote = self.remote_cb
         
         self.on_pub_goal = None
         self.on_pub_gripper = None
@@ -35,6 +36,7 @@ class Teleopoperator:
         self.on_rerecord = None
         
         self.teleop_mode = None
+        self.remote_mode = "gripper"
         
         self.percise_mode = True
         self.solve = get_solve(scale=1.0)
@@ -79,23 +81,20 @@ class Teleopoperator:
         
     def update_teleop_mode(self, teleop_mode):
         self.teleop_mode = teleop_mode
-        assert self.teleop_mode in ["base", "arm", None]
-        if self.teleop_mode == "base":
-            self.webserver.control_datachannel_log("Teleop Mode: Base")
-            logger.info("Teleop Mode: Base")
-        elif self.teleop_mode == "arm":
+        assert self.teleop_mode in ["on", None]
+        if self.teleop_mode == "on":
             if self.percise_mode == "more_percise":
-                self.webserver.control_datachannel_log("Teleop Mode: Arm (More Percise)")
-                logger.info("Teleop Mode: Arm (More Percise)")
+                self.webserver.control_datachannel_log("Teleop Mode: On (More Percise)")
+                logger.info("Teleop Mode: On (More Percise)")
             elif self.percise_mode:
-                self.webserver.control_datachannel_log("Teleop Mode: Arm (Percise)")
-                logger.info("Teleop Mode: Arm (Percise)")
+                self.webserver.control_datachannel_log("Teleop Mode: On (Percise)")
+                logger.info("Teleop Mode: On (Percise)")
             else:
-                self.webserver.control_datachannel_log("Teleop Mode: Arm")
-                logger.info("Teleop Mode: Arm")
+                self.webserver.control_datachannel_log("Teleop Mode: On")
+                logger.info("Teleop Mode: On")
         else:
-            self.webserver.control_datachannel_log("Teleop Mode: None")
-            logger.info("Teleop Mode: None")
+            self.webserver.control_datachannel_log("Teleop Mode: Off")
+            logger.info("Teleop Mode: Off")
 
     async def reset_arm(self, lift_distance=INITIAL_LIFT_DISTANCE, joint_bent=math.pi/4, far_seeing=False):  
         self.far_seeing = far_seeing
@@ -201,7 +200,6 @@ class Teleopoperator:
         
     def pedal_cb(self, pedal_real_values):
         pedal_names = ["angular-pos", "angular-neg", "linear-neg", "linear-pos"]
-        pedal_names_arm_mode = ["left-gripper", "lift-neg", "lift-pos", "right-gripper"]
         non_sensetive_area = 0.1
         cliped_pedal_real_values = np.clip((np.array(pedal_real_values) - 0.5) / (0.5 - non_sensetive_area) * 0.5 + 0.5, 0, 1)
         
@@ -209,11 +207,33 @@ class Teleopoperator:
         # if np.random.rand() < 0.05: # approx every 20 calls
             # logger.info(f"Pedal Raw: {np.round(pedal_real_values, 2)} -> Clipped: {np.round(cliped_pedal_real_values, 2)}")
             
-        if self.teleop_mode == "arm":
-            values = dict(zip(pedal_names_arm_mode, cliped_pedal_real_values))
+        # if self.teleop_mode == "arm":
+        # elif self.teleop_mode == "base":
+        values = dict(zip(pedal_names, cliped_pedal_real_values))
 
+        LINEAR_VEL_MAX = 1
+        ANGULAR_VEL_MAX = 1
+        linear_vel = (values["linear-pos"] - values["linear-neg"]) * LINEAR_VEL_MAX
+        angular_vel = (values["angular-pos"] - values["angular-neg"]) * ANGULAR_VEL_MAX * (-1 if linear_vel < 0 else 1)
+
+        self.on_cmd_vel(linear_vel, angular_vel)
+
+    def remote_cb(self, remote_values):
+        side = remote_values["side"]
+        force = remote_values.get("force", 0.0)
+        # event_code = remote_values.get("eventCode", 0)
+        # button_id = remote_values.get("buttonId", 0)
+        
+        if self.teleop_mode is None:
+            return
+
+        if side not in ["left", "right"]:
+            return
+        
+        if self.remote_mode == "lift":
+            # 右升左降
             LIFT_VEL_MAX = 0.5
-            lift_vel = (values["lift-pos"] - values["lift-neg"]) * LIFT_VEL_MAX
+            lift_vel = force * LIFT_VEL_MAX * (1 if side == "right" else -1)
 
             TIME_DELTA = 0.1 # TODO Better solution
             change = lift_vel * TIME_DELTA
@@ -232,49 +252,32 @@ class Teleopoperator:
                 self.lift_distance += change
                 logger.info(f"Lift Distance: {self.lift_distance:.3f}")
                 self.webserver.control_datachannel_log(f"Lift Distance: {self.lift_distance:.3f}")
+        elif self.remote_mode == "gripper":
+            gripper_pos = (1 - force) * GRIPPER_MAX
             
-            gripper_pos = {}
-            for side in ["left", "right"]:
-                gripper_pos[side] = (1 - values[f"{side}-gripper"]) * GRIPPER_MAX
+            if self.gripper_lock[side] == True and gripper_pos > GRIPPER_MAX * 0.9:
+                self.gripper_lock[side] = 'ready_to_unlock'
                 
-            # Unlock gripper lock
-            for side in ["left", "right"]:
-                if self.gripper_lock[side] == True and gripper_pos[side] > GRIPPER_MAX * 0.9:
-                    self.gripper_lock[side] = 'ready_to_unlock'
-
-                    logger.info(f"{side.capitalize()} Gripper Lock: Locked (Ready to Unlock)")
-                    self.webserver.control_datachannel_log(f"{side.capitalize()} Gripper Lock: Locked (Ready to Unlock)")
-
-            for side in ["left", "right"]:
-                if self.gripper_lock[side] == 'ready_to_unlock' and gripper_pos[side] <= self.last_gripper_pos[side]:
-                    self.gripper_lock[side] = False
-                    logger.info(f"{side.capitalize()} Gripper Lock: Unlocked")
-                    self.webserver.control_datachannel_log(f"{side.capitalize()} Gripper Lock: Unlocked")
-
-            # Update last gripper pos if not locked
-            for side in ["left", "right"]:
-                if self.gripper_lock[side] == False:
-                    self.last_gripper_pos[side] = gripper_pos[side]
+                logger.info(f"{side.capitalize()} Gripper Lock: Locked (Ready to Unlock)")
+                self.webserver.control_datachannel_log(f"{side.capitalize()} Gripper Lock: Locked (Ready to Unlock)")
+                
+            if self.gripper_lock[side] == 'ready_to_unlock' and gripper_pos <= self.last_gripper_pos[side]:
+                self.gripper_lock[side] = False
+                logger.info(f"{side.capitalize()} Gripper Lock: Unlocked")
+                self.webserver.control_datachannel_log(f"{side.capitalize()} Gripper Lock: Unlocked")
             
-            for side in ["left", "right"]:
-            # for side in ["left"]:
+            if self.gripper_lock[side] == False:
+                self.last_gripper_pos[side] = gripper_pos
                 self.on_pub_gripper(side, self.last_gripper_pos[side])
                 
-            self.on_cmd_vel(0.0, 0.0)
-        elif self.teleop_mode == "base":
-            values = dict(zip(pedal_names, cliped_pedal_real_values))
-
-            LINEAR_VEL_MAX = 1
-            ANGULAR_VEL_MAX = 1
-            linear_vel = (values["linear-pos"] - values["linear-neg"]) * LINEAR_VEL_MAX
-            angular_vel = (values["angular-pos"] - values["angular-neg"]) * ANGULAR_VEL_MAX * (-1 if linear_vel < 0 else 1)
-
-            self.on_cmd_vel(linear_vel, angular_vel)
+        else:
+            logger.warn(f"Unknown remote mode: {self.remote_mode}")
+            self.webserver.control_datachannel_log(f"Unknown remote mode: {self.remote_mode}")
     
     async def control_cb(self, control_type):
         self.webserver.control_datachannel_log(f"Cmd: {control_type}")
         logger.info(f"Cmd: {control_type}")
-        if control_type == "reset":
+        if control_type == "operate_reset":
             self.update_teleop_mode(None)
             self.last_gripper_pos = { "left": GRIPPER_MAX, "right": GRIPPER_MAX }
             await self.reset_arm(INITIAL_LIFT_DISTANCE, math.pi/4, far_seeing=False)
@@ -294,38 +297,42 @@ class Teleopoperator:
             self.on_rerecord()
             self.webserver.control_datachannel_log("Rerecord event")
             logger.info("Rerecord event")
-        elif control_type == "teleop_mode_none":
+        elif control_type == "teleop_mode_off":
             self.update_teleop_mode(None)
-        elif control_type == "teleop_mode_base":
-            self.update_teleop_mode(None)
+        elif control_type == "teleop_mode_on":
             await self.update_percise_mode(percise_mode=True)
-            self.update_teleop_mode("base")
-        elif control_type == "teleop_mode_arm":
-            self.update_teleop_mode(None)
-            await self.update_percise_mode(percise_mode=True)
-            self.update_teleop_mode("arm")
-        elif control_type == "teleop_mode_base_with_reset":
+            self.update_teleop_mode("on")
+        elif control_type == "teleop_mode_toggle":
+            if self.teleop_mode is None:
+                await self.update_percise_mode(percise_mode=True)
+                self.update_teleop_mode("on")
+            else:
+                self.update_teleop_mode(None)
+        elif control_type == "move_reset":
             self.update_teleop_mode(None)
             await self.reset_arm(self.lift_distance, math.pi/2*0.9, far_seeing=True)
             await self.update_percise_mode(percise_mode=True)
-            self.update_teleop_mode("base")
-        elif control_type == "teleop_mode_arm_with_reset":
-            self.update_teleop_mode(None)            
-            await self.reset_arm(self.lift_distance, math.pi/4, far_seeing=False)
-            await self.update_percise_mode(percise_mode=True)
-            self.update_teleop_mode("arm")
         elif control_type == "percise_mode_false":
             self.update_teleop_mode(None)
             await self.update_percise_mode(percise_mode=False)
-            self.update_teleop_mode("arm")
+            self.update_teleop_mode("on")
         elif control_type == "percise_mode_true":
             self.update_teleop_mode(None)
             await self.update_percise_mode(percise_mode=True)
-            self.update_teleop_mode("arm")
+            self.update_teleop_mode("on")
         elif control_type == "percise_mode_more_percise":
             self.update_teleop_mode(None)
             await self.update_percise_mode(percise_mode="more_percise")
-            self.update_teleop_mode("arm")
+            self.update_teleop_mode("on")
+        elif control_type == "percise_mode_next":
+            next_mode_dict = {
+                False: True,
+                True: "more_percise",
+                "more_percise": False,
+            }
+            self.update_teleop_mode(None)
+            await self.update_percise_mode(percise_mode=next_mode_dict[self.percise_mode])
+            self.update_teleop_mode("on")
         elif control_type == "gripper_lock_left":
             self.gripper_lock["left"] = True
             logger.info("Left Gripper Lock: Locked, release your pedal to unlock")
@@ -334,6 +341,22 @@ class Teleopoperator:
             self.gripper_lock["right"] = True
             logger.info("Right Gripper Lock: Locked, release your pedal to unlock")
             self.webserver.control_datachannel_log("Right Gripper Lock: Locked, release your pedal to unlock")
+        elif control_type == "gripper_mode":
+            self.remote_mode = "gripper"
+            logger.info("Change to Gripper Mode")
+            self.webserver.control_datachannel_log("Change to Gripper Mode")
+        elif control_type == "lift_mode":
+            self.remote_mode = "lift"
+            logger.info("Change to Lift Mode")
+            self.webserver.control_datachannel_log("Change to Lift Mode")
+        elif control_type == "remote_mode_toggle":
+            self.remote_mode = "lift" if self.remote_mode == "gripper" else "gripper"
+            if self.remote_mode == "gripper":
+                logger.info("Change to Gripper Mode")
+                self.webserver.control_datachannel_log("Change to Gripper Mode")
+            else:
+                logger.info("Change to Lift Mode")
+                self.webserver.control_datachannel_log("Change to Lift Mode")
             
     def error_cb(self, msg):
         self.webserver.loop.call_soon_threadsafe(self.webserver.control_datachannel_log, msg)

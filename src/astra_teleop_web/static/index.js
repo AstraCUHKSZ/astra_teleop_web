@@ -5,6 +5,7 @@ function sleep(time) {
 const handCommTarget = new EventTarget();
 const pedalCommTarget = new EventTarget();
 const controlCommTarget = new EventTarget();
+const remoteCommTarget = new EventTarget();
 
 async function start() {
   if (document.getElementById('start').classList.contains("hidden")) {
@@ -56,6 +57,24 @@ async function start() {
 
   handChannel.addEventListener('close', function (evt) {
     handCommTarget.removeEventListener('toServer', handToServerCb);
+  })
+
+  const remoteChannel = pc.createDataChannel("remote")
+
+  const remoteToServerCb = async function (evt) {
+    remoteChannel.send(evt.detail)
+  }
+
+  remoteChannel.addEventListener('open', function (evt) {
+    remoteCommTarget.addEventListener('toServer', remoteToServerCb);
+
+    remoteChannel.addEventListener('message', function (evt) {
+      remoteCommTarget.dispatchEvent(new CustomEvent("fromServer", { detail: evt.data }))
+    })
+  })
+
+  remoteChannel.addEventListener('close', function (evt) {
+    remoteCommTarget.removeEventListener('toServer', remoteToServerCb);
   })
 
   const pedalChannel = pc.createDataChannel("pedal")
@@ -549,11 +568,11 @@ async function calibrate() {
   document.getElementById('calibrate').classList.remove("hidden");
 }
 
-async function getSerial() {
+async function getSerial(usbVendorId) {
+  const frameLength = 16 + 2;
   let port;
   try {
-    const usbVendorId = 0x1a86; // New Vendor
-    port = await navigator.serial.requestPort({ filters: [{ usbVendorId }] })
+    port = await navigator.serial.requestPort({ filters: [{ usbVendorId: usbVendorId }] });
 
     await port.open({ baudRate: 921600 });
   } catch (error) {
@@ -566,46 +585,43 @@ async function getSerial() {
   async function* gen() {
     let isClose;
     while (port.readable) {
-      // see: https://web.dev/articles/streams?hl=zh-cn#creating_a_readable_byte_stream
-      const reader = port.readable.getReader({ mode: "byob" });
+      const reader = port.readable.getReader();
+      const pendingBytes = [];
+
+      async function readByte() {
+        while (pendingBytes.length === 0) {
+          const { value, done } = await reader.read();
+          if (done) throw Error('done'); // |reader| has been canceled.
+          if (value) {
+            pendingBytes.push(...value);
+          }
+        }
+        return pendingBytes.shift();
+      }
+
       try {
         while (true) {
-          // fixed length 
-          let buffer = new ArrayBuffer(16 + 2); // package length = 16
-          let offset = 0
-
-          const { value, done } = await reader.read(new Uint8Array(buffer, 0, 1));
-          if (done) throw Error('done'); // |reader| has been canceled.
-          console.assert(value.byteLength > 0);
-
-          buffer = value.buffer;
+          const frame = new Uint8Array(frameLength);
 
           // syncing
-          while ((new Uint8Array(buffer, 0, 1))[0] != 0x5a) {
-            console.log("syncing..." + (new Uint8Array(buffer, 0, 1))[0]);
-            const { value, done } = await reader.read(new Uint8Array(buffer, 0, 1));
-            if (done) throw Error('done'); // |reader| has been canceled.
-            console.assert(value.byteLength > 0);
-
-            buffer = value.buffer;
+          let byte = await readByte();
+          while (byte !== 0x5a) {
+            console.log("syncing..." + byte);
+            byte = await readByte();
           }
-          offset += 1;
+          frame[0] = byte;
 
           // read remain package
-          while (offset < buffer.byteLength) {
-            const { value, done } = await reader.read(new Uint8Array(buffer, offset, buffer.byteLength - offset));
-            if (done) throw Error('done'); // |reader| has been canceled.
-            console.assert(value.byteLength > 0);
-
-            buffer = value.buffer;
-            offset += value.byteLength;
+          for (let offset = 1; offset < frame.length; ++offset) {
+            frame[offset] = await readByte();
           }
           
-          isClose = yield buffer;
+          isClose = yield frame.buffer;
           if (isClose) throw Error('Close');
         }
       } catch (error) {
         // Handle |error|...
+        console.error(error);
         if (error.message !== "Close") {
           toastr.error("oops")
           toastr.error(error)
@@ -619,10 +635,14 @@ async function getSerial() {
 
     port.close();
   }
-  
+
   const g = await gen();
 
-  return { serialRead: (close) => g.next(close), serialWrite: writer.write };
+  return {
+    port,
+    serialRead: (close) => g.next(close),
+    serialWrite: writer.write.bind(writer),
+  };
 }
 
 const PEDAL_MAX = 4096;
@@ -647,7 +667,7 @@ async function connectPedal() {
   const pedalMin = JSON.parse(localStorage.getItem("pedalMin"));
   const pedalMax = JSON.parse(localStorage.getItem("pedalMax"));
 
-  const { serialRead, serialWrite } = await getSerial();
+  const { serialRead, serialWrite } = await getSerial(0x1a86);
   
   document.getElementById('connect-pedal').classList.add("hidden");
   document.getElementById('calibrate-pedal').classList.add("hidden");
@@ -690,7 +710,7 @@ async function connectPedal() {
 }
 
 async function calibratePedal() {
-  const { serialRead } = await getSerial();
+  const { serialRead } = await getSerial(0x1a86);
   
   document.getElementById('connect-pedal').classList.add("hidden");
   document.getElementById('calibrate-pedal').classList.add("hidden");
@@ -744,6 +764,325 @@ async function calibratePedal() {
   document.getElementById('calibrate-pedal').classList.remove("hidden");
 }
 
+const SENSOR_MAX = 4096; //TODO: find real max value of sensor
+
+const remoteConnectState = {
+  phase: "idle", // idle | one-connected | connected
+  calibration: null,
+  ports: {
+    left: null,
+    right: null,
+  },
+  readers: {
+    left: null,
+    right: null,
+  },
+};
+
+function updateRemoteDebugValues(values) {
+  const rawEl = document.getElementById(`force-raw-${values.side}`);
+  if (rawEl) {
+    rawEl.innerHTML = values.forceRaw;
+  }
+
+  if (values.eventCode !== 0) {
+    if (values.side === "left") {
+      if (values.buttonId === 0) {
+        if (values.eventCode === 1) {
+          // 左按钮0单击 启动和停止远控
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_toggle") }));
+        } else {
+          // 左按钮0双击 调整精度
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("percise_mode_next") }));
+        }
+      } else if (values.buttonId === 1) {
+        controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("remote_mode_toggle") }));
+      }
+    } else if (values.side === "right") {
+      if (values.buttonId === 0) {
+        if (values.eventCode === 1) {
+          // 右按钮0单击 结束录制
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("done") }));
+        } else {
+          // 右按钮0双击 重新录制
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("rerecord") }));
+        }
+      } else if (values.buttonId === 1) {
+        if (values.eventCode === 1) {
+          // 右按钮1单击 重置
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("operate_reset") }));
+        } else {
+          // 右按钮1双击 重置到移动模式
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("move_reset") }));
+        }
+      }
+    }
+
+  }
+}
+
+function getRemoteControllerValues(buffer) {
+  // MARK: getRemoteControllerValues
+  const bytes = new Uint8Array(buffer);
+  const data = new DataView(buffer);
+
+  if (bytes[0] !== 0x5a) {
+    throw new Error("Invalid remote frame header");
+  }
+
+  return {
+    type: bytes[1],
+    device: bytes[2],
+    side: bytes[3] === 0x00 ? "left" : "right",
+    eventCode: bytes[4],
+    buttonId: bytes[5],
+    forceRaw: data.getUint16(6, false)
+  };
+}
+
+async function connectOneRemote(state) {
+  const { port, serialRead } = await getSerial(0x303A);
+
+  const { value: buffer, done } = await serialRead();
+  if (done) return null;
+
+  const values = getRemoteControllerValues(buffer);
+  const side = values.side;
+
+  if (state.readers[side]) {
+    toastr.error(`${side} already connected`);
+    await serialRead(true);
+    return null;
+  }
+
+  state.ports[side] = port;
+  state.readers[side] = serialRead;
+
+  return side;
+}
+
+async function startRemoteReadLoop(side) {
+  const serialRead = remoteConnectState.readers[side];
+  const calibration = remoteConnectState.calibration[side];
+
+  try {
+    while (true) {
+      const { value: buffer, done } = await serialRead();
+      if (done) break;
+
+      const values = getRemoteControllerValues(buffer);
+      updateRemoteDebugValues(values);
+
+      if (values.side !== side) {
+        toastr.error(`Expected ${side}, got ${values.side}`);
+        continue;
+      }
+
+      const force = (values.forceRaw - calibration.min) / (calibration.max - calibration.min);
+      const forceClamped = Math.max(0, Math.min(1, force));
+
+      document.getElementById(`force-${side}`).innerHTML = forceClamped.toFixed(2);
+      document.getElementById(`${side}-gripper`).value =forceClamped * 100;
+
+      remoteCommTarget.dispatchEvent(new CustomEvent("toServer", {
+        detail: JSON.stringify({
+          side,
+          force: forceClamped,
+          forceRaw: values.forceRaw,
+          eventCode: values.eventCode,
+          buttonId: values.buttonId,
+        }),
+      }));
+    }
+  } catch (error) {
+    toastr.error(`${side} remote error: ${error.message}`);
+  } finally {
+    remoteConnectState.ports[side] = null;
+    remoteConnectState.readers[side] = null;
+
+    document.getElementById("remote-status").innerHTML =
+      `${side} controller disconnected`;
+
+    const leftDisconnected = remoteConnectState.readers.left === null;
+    const rightDisconnected = remoteConnectState.readers.right === null;
+
+    if (leftDisconnected && rightDisconnected) {
+      remoteConnectState.phase = "idle";
+      remoteConnectState.calibration = null;
+
+      const connectBtn = document.getElementById("connect-remote");
+      connectBtn.textContent = "Connect Remote Controller";
+      connectBtn.classList.remove("hidden");
+
+      document.getElementById("remote-status").innerHTML =
+        "Remote controllers disconnected";
+    }
+  }
+}
+
+async function connectRemoteController() {
+  if (localStorage.getItem("remoteCalibration") === null) {
+    toastr.error("You need calibrate remote controllers first.");
+    return;
+  }
+
+  const side = await connectOneRemote(remoteConnectState);
+  if (!side) return;
+
+  if (!remoteConnectState.readers.left || !remoteConnectState.readers.right) {
+    remoteConnectState.phase = "one-connected";
+
+    toastr.success(`${side} connected. Click again to connect the other one.`);
+    document.getElementById("connect-remote").textContent = "Connect Second Remote";
+
+    return;
+  }
+
+  remoteConnectState.phase = "connected";
+  remoteConnectState.calibration = JSON.parse(localStorage.getItem("remoteCalibration"));
+
+  document.getElementById("connect-remote").classList.add("hidden");
+  document.getElementById("remote-status").innerHTML = "Two controllers connected";
+
+  startRemoteReadLoop("left");
+  startRemoteReadLoop("right");
+}
+
+async function readRemoteForceDuringCalibration(side, durationMs) {
+  const serialRead = remoteConnectState.readers[side];
+  const deadline = performance.now() + durationMs;
+  let forceRaw = null;
+
+  while (performance.now() < deadline) {
+    const { value: buffer, done } = await serialRead();
+    if (done) throw new Error(`${side} remote serial closed`);
+
+    const values = getRemoteControllerValues(buffer);
+    updateRemoteDebugValues(values);
+    if (values.side !== side) {
+      throw new Error(`Expected ${side}, got ${values.side}`);
+    }
+
+    forceRaw = values.forceRaw;
+    
+    const forceEl = document.getElementById(`force-${side}`);
+    if (forceEl) {
+      forceEl.innerHTML = forceRaw;
+    }
+
+    const forcePreview = (SENSOR_MAX - forceRaw) / SENSOR_MAX;
+    const forcePreviewClamped = Math.max(
+      0,
+      Math.min(1, forcePreview)
+    );
+    const sliderValue = forcePreviewClamped * 100;
+
+    console.log(
+      side,
+      "raw:", forceRaw,
+      "preview:", forcePreviewClamped,
+      "slider:", sliderValue
+    );
+
+    const gripperEl = document.getElementById(`${side}-gripper`);
+    if (gripperEl) {
+      gripperEl.value = sliderValue;
+    }
+  }
+
+  if (forceRaw === null) {
+    throw new Error(`${side} remote did not send calibration data`);
+  }
+
+  return forceRaw;
+}
+
+async function waitRemoteForcesForCalibration(prompt, durationMs) {
+  toastr.info(prompt, undefined, { timeOut: durationMs, showDuration: 0, hideDuration: 0 });
+
+  return Promise.all([
+    readRemoteForceDuringCalibration("left", durationMs),
+    readRemoteForceDuringCalibration("right", durationMs),
+  ]);
+}
+
+async function runRemoteCalibration() {
+  const calibrationSampleMs = 5000;
+
+  const [leftMin, rightMin] = await waitRemoteForcesForCalibration(
+    "Release both force sensors.",
+    calibrationSampleMs
+  );
+
+  toastr.info("Min value saved.", undefined, { timeOut: 2000, showDuration: 0, hideDuration: 0 });
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  const [leftMax, rightMax] = await waitRemoteForcesForCalibration(
+    "Press both force sensors.",
+    calibrationSampleMs
+  );
+
+  toastr.info("Max value saved.", undefined, { timeOut: 2000, showDuration: 0, hideDuration: 0 });
+
+  if (leftMin === leftMax || rightMin === rightMax) {
+    toastr.warning(
+      `Remote calibration min/max are equal.<br>` +
+      `Left min: ${leftMin}, max: ${leftMax}<br>` +
+      `Right min: ${rightMin}, max: ${rightMax}`
+    );
+  }
+
+  const calibration = {
+    left: {
+      min: leftMin,
+      max: leftMax,
+    },
+    right: {
+      min: rightMin,
+      max: rightMax,
+    },
+  };
+
+  localStorage.setItem("remoteCalibration", JSON.stringify(calibration));
+
+  toastr.success(
+    `Remote calibration saved.<br>` +
+    `Left min: ${leftMin}, max: ${leftMax}<br>` +
+    `Right min: ${rightMin}, max: ${rightMax}`
+  );
+}
+
+async function calibrateRemoteController() {
+  const side = await connectOneRemote(remoteConnectState);
+
+  if (!side) return;
+
+  if (!remoteConnectState.readers.left || !remoteConnectState.readers.right) {
+    remoteConnectState.phase = "one-connected";
+    toastr.success(`${side} remote connected. Click again to connect the other one.`);
+    document.getElementById("connect-remote").classList.add("hidden");
+    return;
+  }
+
+  remoteConnectState.phase = "calibrating";
+  document.getElementById("calibrate-remote").classList.add("hidden");
+
+  await runRemoteCalibration();
+
+  await remoteConnectState.readers.left(true);
+  await remoteConnectState.readers.right(true);
+
+  document.getElementById("connect-remote").classList.remove("hidden");
+  document.getElementById("calibrate-remote").classList.remove("hidden");
+  
+  remoteConnectState.ports.left = null;
+  remoteConnectState.ports.right = null;
+  remoteConnectState.readers.left = null;
+  remoteConnectState.readers.right = null;
+  remoteConnectState.phase = "idle";
+}
+
+
 window.addEventListener('load', function () {
   // Notice: autoplay is restricted when user is not clicked the page
   // start()
@@ -768,14 +1107,8 @@ window.addEventListener('load', function () {
           controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("rerecord") }));
         } else if (keyName.toLowerCase() == '0') {
           controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_none") }));
-        } else if (keyName.toLowerCase() == '`') {
-          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_base") }));
         } else if (keyName.toLowerCase() == '1') {
-          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_arm") }));
-        }else if (keyName.toLowerCase() == '~') {
-          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_base_with_reset") }));
-        } else if (keyName.toLowerCase() == '!') {
-          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_arm_with_reset") }));
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("teleop_mode_on") }));
         } else if (keyName.toLowerCase() == '2') {
           controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("percise_mode_false") }));
         } else if (keyName.toLowerCase() == '3') {
@@ -783,7 +1116,9 @@ window.addEventListener('load', function () {
         } else if (keyName.toLowerCase() == '4') {
           controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("percise_mode_more_percise") }));
         } else if (keyName.toLowerCase() == 'r') {
-          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("reset") }));
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("operate_reset") }));
+        } else if (keyName.toLowerCase() == 'm') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("move_reset") }));
         } else if (keyName.toLowerCase() == 'f') {
           controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("done") }));
         } else if (keyName.toLowerCase() == 't') {
@@ -792,6 +1127,10 @@ window.addEventListener('load', function () {
           controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_left") }));
         } else if (keyName.toLowerCase() == 'x') {
           controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_lock_right") }));
+        } else if (keyName.toLowerCase() == 'g') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("gripper_mode") }));
+        } else if (keyName.toLowerCase() == 'l') {
+          controlCommTarget.dispatchEvent(new CustomEvent("toServer", { detail: JSON.stringify("lift_mode") }));
         }
       }
     },
@@ -833,6 +1172,12 @@ window.addEventListener('load', function () {
       document.getElementById('gripper-lock-left').innerHTML = 'Locked (Ready to Unlock)';
     } else if (message === "Right Gripper Lock: Locked (Ready to Unlock)") {
       document.getElementById('gripper-lock-right').innerHTML = 'Locked (Ready to Unlock)';
+    } else if (message === "Change to Gripper Mode") {
+      const orig = document.getElementById('teleop-mode').innerHTML;
+      document.getElementById('remote-mode').innerHTML = orig.replace(/Remote Mode: \S+/, "Remote Mode: Gripper");
+    } else if (message === "Change to Lift Mode") {
+      const orig = document.getElementById('teleop-mode').innerHTML;
+      document.getElementById('remote-mode').innerHTML = orig.replace(/Remote Mode: \S+/, "Remote Mode: Lift");
     }
   });
 
